@@ -61,9 +61,11 @@ private final class WallpaperWindow {
         case .video:
             return VideoWallpaperView(url: url, frame: frame)
         case .web:
-            let webView = WKWebView(frame: frame)
-            webView.loadFileURL(url, allowingReadAccessTo: URL(filePath: asset.projectDirectory))
-            return webView
+            return RestrictedWebWallpaperView(
+                url: url,
+                readAccessURL: URL(filePath: asset.projectDirectory),
+                frame: frame
+            )
         case .image:
             guard let image = NSImage(contentsOf: url) else {
                 throw PlaybackError.invalidImage
@@ -74,6 +76,65 @@ private final class WallpaperWindow {
             return imageView
         case .scene, .unknown:
             throw PlaybackError.notPlayable(asset.kind.rawValue)
+        }
+    }
+}
+
+@MainActor
+private final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate {
+    private let webView: WKWebView
+    private let url: URL
+    private let readAccessURL: URL
+
+    init(url: URL, readAccessURL: URL, frame: CGRect) {
+        self.url = url
+        self.readAccessURL = readAccessURL
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        webView = WKWebView(frame: frame, configuration: configuration)
+        super.init(frame: frame)
+        webView.navigationDelegate = self
+        addSubview(webView)
+        installRemoteBlockerAndLoad()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func layout() {
+        super.layout()
+        webView.frame = bounds
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+    ) {
+        let targetURL = navigationAction.request.url
+        decisionHandler(targetURL?.isFileURL == true ? .allow : .cancel)
+    }
+
+    private func installRemoteBlockerAndLoad() {
+        let rules = #"""
+        [{"trigger":{"url-filter":"^https?://.*"},"action":{"type":"block"}}]
+        """#
+        WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: "dev.3xhaust.WorkshopWallpaperBridge.BlockRemote",
+            encodedContentRuleList: rules
+        ) { [weak self] ruleList, _ in
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+                if let ruleList {
+                    self.webView.configuration.userContentController.add(ruleList)
+                }
+                self.webView.loadFileURL(self.url, allowingReadAccessTo: self.readAccessURL)
+            }
         }
     }
 }

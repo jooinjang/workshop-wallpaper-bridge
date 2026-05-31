@@ -18,11 +18,12 @@ public struct LibraryStore: Sendable {
 
     public func importAsset(_ asset: WallpaperAsset) throws -> WallpaperAsset {
         try FileManager.default.createDirectory(at: assetsRoot, withIntermediateDirectories: true)
-        let target = assetsRoot.appending(path: safeFileName(asset.id))
-        if FileManager.default.fileExists(atPath: target.path) {
-            try FileManager.default.removeItem(at: target)
-        }
-        try FileManager.default.copyItem(at: URL(filePath: asset.projectDirectory), to: target)
+        let directoryName = storageDirectoryName(for: asset.id)
+        let target = assetsRoot.appending(path: directoryName)
+        let replacement = assetsRoot.appending(path: ".\(directoryName).incoming-\(UUID().uuidString)")
+        let backup = assetsRoot.appending(path: ".\(directoryName).previous-\(UUID().uuidString)")
+        try FileManager.default.copyItem(at: URL(filePath: asset.projectDirectory), to: replacement)
+        try replaceDirectory(target: target, replacement: replacement, backup: backup)
         let imported = rewrite(asset: asset, source: URL(filePath: asset.projectDirectory), target: target)
         var manifest = try load()
         manifest = LibraryManifest(
@@ -64,6 +65,27 @@ public struct LibraryStore: Sendable {
         try data.write(to: root.appending(path: "library.json"), options: [.atomic])
     }
 
+    private func replaceDirectory(target: URL, replacement: URL, backup: URL) throws {
+        let exists = FileManager.default.fileExists(atPath: target.path)
+        if exists {
+            try FileManager.default.moveItem(at: target, to: backup)
+        }
+        do {
+            try FileManager.default.moveItem(at: replacement, to: target)
+            if exists {
+                try FileManager.default.removeItem(at: backup)
+            }
+        } catch {
+            if exists, FileManager.default.fileExists(atPath: backup.path) {
+                try? FileManager.default.moveItem(at: backup, to: target)
+            }
+            if FileManager.default.fileExists(atPath: replacement.path) {
+                try? FileManager.default.removeItem(at: replacement)
+            }
+            throw error
+        }
+    }
+
     private func rewrite(asset: WallpaperAsset, source: URL, target: URL) -> WallpaperAsset {
         WallpaperAsset(
             id: asset.id,
@@ -93,12 +115,13 @@ public struct LibraryStore: Sendable {
     }
 }
 
-private func safeFileName(_ value: String) -> String {
-    value.map { character in
-        character.isLetter || character.isNumber || character == "-" || character == "_" ? character : "_"
-    }.reduce(into: "") { result, character in
-        result.append(character)
-    }
+private func storageDirectoryName(for id: String) -> String {
+    let encoded = Data(id.utf8)
+        .base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+    return "id-\(encoded)"
 }
 
 private extension JSONEncoder {
