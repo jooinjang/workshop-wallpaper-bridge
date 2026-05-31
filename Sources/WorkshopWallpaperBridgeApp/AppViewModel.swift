@@ -1,0 +1,145 @@
+import AppKit
+import Foundation
+import WorkshopWallpaperCore
+
+@MainActor
+final class AppViewModel: ObservableObject {
+    @Published var sourcePath = ""
+    @Published var scannedAssets: [WallpaperAsset] = []
+    @Published var libraryAssets: [WallpaperAsset] = []
+    @Published var selectedScannedAssetId: WallpaperAsset.ID?
+    @Published var selectedLibraryAssetId: WallpaperAsset.ID?
+    @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
+    @Published var isWorking = false
+
+    private let scanner = WallpaperScanner()
+    private let converter = VideoConverter()
+    private let store: LibraryStore
+
+    init() {
+        do {
+            store = try LibraryStore.defaultStore()
+            loadLibrary()
+        } catch {
+            store = LibraryStore(root: FileManager.default.temporaryDirectory.appending(path: "WorkshopWallpaperBridge"))
+            status = error.localizedDescription
+        }
+    }
+
+    var selectedScannedAsset: WallpaperAsset? {
+        scannedAssets.first { $0.id == selectedScannedAssetId }
+    }
+
+    var selectedLibraryAsset: WallpaperAsset? {
+        libraryAssets.first { $0.id == selectedLibraryAssetId }
+    }
+
+    func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            sourcePath = url.path
+            scanSource()
+        }
+    }
+
+    func scanSource() {
+        guard !sourcePath.isEmpty else {
+            status = "Choose a folder first."
+            return
+        }
+        do {
+            let result = try scanner.scan(root: URL(filePath: sourcePath))
+            scannedAssets = result.assets
+            selectedScannedAssetId = result.assets.first?.id
+            status = "Found \(result.assets.count) project(s)."
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func importSelected() {
+        guard let asset = selectedScannedAsset else {
+            status = "Select a scanned project first."
+            return
+        }
+        do {
+            let imported = try store.importAsset(asset)
+            loadLibrary()
+            selectedLibraryAssetId = imported.id
+            status = "Imported \(imported.title)."
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func playSelected() {
+        guard let asset = selectedLibraryAsset else {
+            status = "Select a library project first."
+            return
+        }
+        do {
+            try WallpaperPlayer.shared.play(asset: asset)
+            status = "Playing \(asset.title) on the desktop."
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    func convertSelected() {
+        guard let asset = selectedLibraryAsset, let entrypoint = asset.entrypoint else {
+            status = "Select a library video first."
+            return
+        }
+        let output = URL(filePath: asset.projectDirectory).appending(path: "wwb-converted.mp4")
+        isWorking = true
+        status = "Converting \(asset.title)..."
+        let converter = self.converter
+        Task {
+            do {
+                try await Task.detached {
+                    try converter.convertToPlayableVideo(input: URL(filePath: entrypoint), output: output)
+                }.value
+                let converted = convertedAsset(asset, output: output)
+                try store.replaceAsset(converted)
+                loadLibrary()
+                selectedLibraryAssetId = converted.id
+                status = "Converted \(asset.title)."
+            } catch {
+                status = error.localizedDescription
+            }
+            isWorking = false
+        }
+    }
+
+    func stopPlayback() {
+        WallpaperPlayer.shared.stop()
+        status = "Playback stopped."
+    }
+
+    func loadLibrary() {
+        do {
+            libraryAssets = try store.load().assets
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    private func convertedAsset(_ asset: WallpaperAsset, output: URL) -> WallpaperAsset {
+        WallpaperAsset(
+            id: asset.id,
+            title: asset.title,
+            kind: .video,
+            supportStatus: .playable,
+            source: asset.source,
+            projectDirectory: asset.projectDirectory,
+            entrypoint: output.path,
+            thumbnail: asset.thumbnail,
+            workshopId: asset.workshopId,
+            redistributionAllowed: false,
+            issues: asset.issues.filter { $0.code != "needs_conversion" }
+        )
+    }
+}

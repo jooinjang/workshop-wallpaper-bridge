@@ -1,0 +1,218 @@
+import Foundation
+
+public struct WallpaperScanner: Sendable {
+    public init() {}
+
+    public func scan(root: URL) throws -> ScanResult {
+        let projects = try discoverProjects(root: root.standardizedFileURL)
+        let assets = try projects
+            .map { try scanProject(root: root.standardizedFileURL, project: $0) }
+            .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+        return ScanResult(root: root.path, generatedAt: Date(), assets: assets)
+    }
+
+    private func discoverProjects(root: URL) throws -> [URL] {
+        if isProjectDirectory(root) {
+            return [root]
+        }
+        return try FileManager.default
+            .contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+            .filter { isDirectory($0) && isProjectDirectory($0) }
+    }
+
+    private func scanProject(root: URL, project: URL) throws -> WallpaperAsset {
+        let metadata = ProjectMetadata.load(from: project.appending(path: "project.json"))
+        let entry = try findEntrypoint(in: project, preferredFile: metadata.value?.file)
+        let kind = classify(entrypoint: entry)
+        let status = supportStatus(kind: kind, entrypoint: entry)
+        let issues = issues(metadata: metadata, kind: kind, entrypoint: entry)
+        let thumbnail = try findThumbnail(in: project, preferredFile: metadata.value?.preview)
+        let id = project.lastPathComponent
+        return WallpaperAsset(
+            id: id,
+            title: metadata.value?.title?.nonEmpty ?? id,
+            kind: kind,
+            supportStatus: status,
+            source: sourceKind(for: root),
+            projectDirectory: project.path,
+            entrypoint: entry?.path,
+            thumbnail: thumbnail?.path,
+            workshopId: id.allSatisfy(\.isNumber) ? id : nil,
+            redistributionAllowed: false,
+            issues: issues
+        )
+    }
+
+    private func isProjectDirectory(_ url: URL) -> Bool {
+        if FileManager.default.fileExists(atPath: url.appending(path: "project.json").path) {
+            return true
+        }
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: url.path) else {
+            return false
+        }
+        return files.contains { entrypointExtensions.contains(URL(filePath: $0).pathExtension.lowercased()) }
+    }
+
+    private func findEntrypoint(in project: URL, preferredFile: String?) throws -> URL? {
+        if let preferredFile, let preferred = resolveExisting(project: project, relativePath: preferredFile) {
+            return preferred
+        }
+        let files = try recursiveFiles(in: project)
+        return files.sorted(by: entrypointSort).first { classify(entrypoint: $0) != .unknown }
+    }
+
+    private func findThumbnail(in project: URL, preferredFile: String?) throws -> URL? {
+        if let preferredFile, let preferred = resolveExisting(project: project, relativePath: preferredFile) {
+            return preferred
+        }
+        let preferredNames = ["preview", "thumbnail", "thumb", "cover"]
+        return try recursiveFiles(in: project).first {
+            imageExtensions.contains($0.pathExtension.lowercased())
+                && preferredNames.contains($0.deletingPathExtension().lastPathComponent.lowercased())
+        }
+    }
+
+    private func recursiveFiles(in directory: URL) throws -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+        return enumerator.compactMap { item in
+            guard let url = item as? URL, isRegularFile(url) else {
+                return nil
+            }
+            return url
+        }
+    }
+
+    private func resolveExisting(project: URL, relativePath: String) -> URL? {
+        let candidate = project.appending(path: relativePath)
+        return FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+    }
+
+    private func classify(entrypoint: URL?) -> WallpaperKind {
+        guard let ext = entrypoint?.pathExtension.lowercased() else {
+            return .unknown
+        }
+        if playableVideoExtensions.contains(ext) || conversionVideoExtensions.contains(ext) {
+            return .video
+        }
+        if ext == "html" || ext == "htm" {
+            return .web
+        }
+        if imageExtensions.contains(ext) {
+            return .image
+        }
+        if ext == "pkg" {
+            return .scene
+        }
+        return .unknown
+    }
+
+    private func supportStatus(kind: WallpaperKind, entrypoint: URL?) -> SupportStatus {
+        switch kind {
+        case .video:
+            guard let ext = entrypoint?.pathExtension.lowercased() else {
+                return .unsupported
+            }
+            return playableVideoExtensions.contains(ext) ? .playable : .needsConversion
+        case .web, .image:
+            return .playable
+        case .scene:
+            return .unsupported
+        case .unknown:
+            return .unsupported
+        }
+    }
+
+    private func issues(metadata: ProjectMetadataResult, kind: WallpaperKind, entrypoint: URL?) -> [ScanIssue] {
+        var result = metadata.issue.map { [$0] } ?? []
+        if entrypoint == nil {
+            result.append(ScanIssue(code: "no_supported_entrypoint", message: "No playable media entrypoint was found."))
+        }
+        if kind == .scene {
+            result.append(ScanIssue(code: "proprietary_scene_package", message: "scene.pkg is a proprietary Wallpaper Engine scene package and is not unpacked."))
+        }
+        return result
+    }
+
+    private func sourceKind(for root: URL) -> SourceKind {
+        let path = root.path.lowercased().replacingOccurrences(of: "\\", with: "/")
+        if path.contains("/steamapps/workshop/content/431960") {
+            return .localSteamWorkshop
+        }
+        if path.contains("/wallpaper_engine/projects/backup") {
+            return .wallpaperEngineBackup
+        }
+        return .manualFolder
+    }
+}
+
+private struct ProjectMetadata: Decodable {
+    let title: String?
+    let file: String?
+    let preview: String?
+}
+
+private struct ProjectMetadataResult {
+    let value: ProjectMetadata?
+    let issue: ScanIssue?
+}
+
+private extension ProjectMetadata {
+    static func load(from url: URL) -> ProjectMetadataResult {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return ProjectMetadataResult(value: nil, issue: nil)
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let value = try JSONDecoder().decode(ProjectMetadata.self, from: data)
+            return ProjectMetadataResult(value: value, issue: nil)
+        } catch {
+            return ProjectMetadataResult(
+                value: nil,
+                issue: ScanIssue(code: "malformed_project_json", message: "project.json could not be parsed.")
+            )
+        }
+    }
+}
+
+private let playableVideoExtensions = ["mp4", "mov", "m4v"]
+private let conversionVideoExtensions = ["webm", "mkv", "avi"]
+private let imageExtensions = ["jpg", "jpeg", "png", "gif", "heic"]
+private let entrypointExtensions = playableVideoExtensions + conversionVideoExtensions + imageExtensions + ["html", "htm", "pkg"]
+
+private func entrypointSort(_ lhs: URL, _ rhs: URL) -> Bool {
+    entrypointRank(lhs) < entrypointRank(rhs)
+}
+
+private func entrypointRank(_ url: URL) -> Int {
+    let ext = url.pathExtension.lowercased()
+    if playableVideoExtensions.contains(ext) { return 0 }
+    if conversionVideoExtensions.contains(ext) { return 1 }
+    if ext == "html" || ext == "htm" { return 2 }
+    if imageExtensions.contains(ext) { return 3 }
+    if ext == "pkg" { return 4 }
+    return 5
+}
+
+private func isDirectory(_ url: URL) -> Bool {
+    (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+}
+
+private func isRegularFile(_ url: URL) -> Bool {
+    (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
