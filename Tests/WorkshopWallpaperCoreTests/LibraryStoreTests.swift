@@ -207,7 +207,7 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(standardPath(repaired.entrypoint), standardPath(scenePackage.path))
         XCTAssertEqual(repaired.thumbnail, preview.path)
         XCTAssertTrue(repaired.issues.contains { $0.code == "scene_package_detected" })
-        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_required" })
+        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_limited" })
     }
 
     func testLoadRepairsLegacyPreviewImageManifestForVideoProject() throws {

@@ -5,6 +5,55 @@ import WorkshopWallpaperCore
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
+    func testImportSelectedImportsMultipleScannedAssets() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let first = try makeScannedProject(root: sourceRoot, id: "first", title: "First Loop")
+        let second = try makeScannedProject(root: sourceRoot, id: "second", title: "Second Loop")
+        let store = LibraryStore(root: try makeTempDirectory())
+        let model = AppViewModel(
+            store: store,
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.scannedAssets = [first, second]
+        model.selectScannedAssets([first.id, second.id])
+
+        // When
+        model.importSelected()
+        let manifest = try store.load()
+
+        // Then
+        XCTAssertEqual(Set(manifest.assets.map(\.id)), [first.id, second.id])
+        XCTAssertEqual(model.selectedLibraryAssetIds, [first.id, second.id])
+        XCTAssertEqual(model.status, "Imported 2 projects.")
+        for asset in manifest.assets {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: asset.projectDirectory))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(asset.entrypoint)))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: first.projectDirectory))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.projectDirectory))
+    }
+
+    func testSelectScannedAssetsIgnoresMissingIds() throws {
+        // Given
+        let sourceRoot = try makeTempDirectory()
+        let asset = try makeScannedProject(root: sourceRoot, id: "one", title: "One")
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            userDefaults: try makeUserDefaults()
+        )
+        model.scannedAssets = [asset]
+
+        // When
+        model.selectScannedAssets([asset.id, "missing"])
+
+        // Then
+        XCTAssertEqual(model.selectedScannedAssetIds, [asset.id])
+        XCTAssertEqual(model.selectedScannedAssetId, asset.id)
+    }
+
     func testInitSelectsFirstLibraryAssetWhenAvailable() throws {
         // Given
         let sourceRoot = try makeTempDirectory()
@@ -138,6 +187,45 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(model.autoPauseWhenCovered)
     }
 
+    func testInitRestoresLockScreenAnimationPreferenceWithoutInstalling() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        defaults.set(true, forKey: "lockScreenAnimationEnabled")
+        let lockScreen = MockLockScreenAnimationController()
+
+        // When
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            lockScreenAnimationController: lockScreen,
+            userDefaults: defaults
+        )
+
+        // Then
+        XCTAssertTrue(model.lockScreenAnimationEnabled)
+        XCTAssertEqual(lockScreen.enabledRequests, [true])
+    }
+
+    func testLockScreenAnimationToggleInstallsScreenSaverAndPersistsPreference() throws {
+        // Given
+        let defaults = try makeUserDefaults()
+        let lockScreen = MockLockScreenAnimationController()
+        let model = AppViewModel(
+            store: LibraryStore(root: try makeTempDirectory()),
+            loginItemController: MockLoginItemController(),
+            lockScreenAnimationController: lockScreen,
+            userDefaults: defaults
+        )
+
+        // When
+        model.lockScreenAnimationEnabled = true
+
+        // Then
+        XCTAssertEqual(lockScreen.enabledRequests, [true])
+        XCTAssertTrue(defaults.bool(forKey: "lockScreenAnimationEnabled"))
+        XCTAssertTrue(model.status.contains("Installed the Lock Screen screen saver"))
+    }
+
     func testStopPlaybackClearsLastPlayedWallpaperPreference() throws {
         // Given
         let defaults = try makeUserDefaults()
@@ -172,6 +260,26 @@ final class AppViewModelTests: XCTestCase {
         }
         return defaults
     }
+
+    private func makeScannedProject(root: URL, id: String, title: String) throws -> WallpaperAsset {
+        let project = root.appending(path: id)
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let entrypoint = project.appending(path: "loop.mp4")
+        try Data([1]).write(to: entrypoint)
+        return WallpaperAsset(
+            id: id,
+            title: title,
+            kind: .video,
+            supportStatus: .playable,
+            source: .localSteamWorkshop,
+            projectDirectory: project.path,
+            entrypoint: entrypoint.path,
+            thumbnail: nil,
+            workshopId: id,
+            redistributionAllowed: false,
+            issues: []
+        )
+    }
 }
 
 @MainActor
@@ -189,6 +297,33 @@ private final class MockLoginItemController: LoginItemManaging {
     }
 
     func openSystemSettings() {}
+}
+
+@MainActor
+private final class MockLockScreenAnimationController: LockScreenAnimationManaging {
+    var enabledRequests: [Bool] = []
+    var updatedAssetIds: [String?] = []
+    var didOpenSettings = false
+    var error: Error?
+
+    func setEnabled(_ enabled: Bool, activeAsset: WallpaperAsset?, displayMode: WallpaperDisplayMode) throws {
+        if let error {
+            throw error
+        }
+        enabledRequests.append(enabled)
+        updatedAssetIds.append(activeAsset?.id)
+    }
+
+    func updateActiveAsset(_ asset: WallpaperAsset?, displayMode: WallpaperDisplayMode) throws {
+        if let error {
+            throw error
+        }
+        updatedAssetIds.append(asset?.id)
+    }
+
+    func openScreenSaverSettings() {
+        didOpenSettings = true
+    }
 }
 
 private enum TestError: Error {

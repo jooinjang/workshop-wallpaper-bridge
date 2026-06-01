@@ -104,7 +104,88 @@ final class ScannerTests: XCTestCase {
         XCTAssertEqual(URL(filePath: try XCTUnwrap(asset.entrypoint)).lastPathComponent, "scene.pkg")
         XCTAssertEqual(URL(filePath: try XCTUnwrap(asset.thumbnail)).lastPathComponent, "preview.jpg")
         XCTAssertTrue(asset.issues.contains { $0.code == "scene_package_detected" })
-        XCTAssertTrue(asset.issues.contains { $0.code == "scene_renderer_required" })
+        XCTAssertTrue(asset.issues.contains { $0.code == "scene_renderer_limited" })
+    }
+
+    func testScanMarksRenderableSceneAsPlayable() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let project = root.appending(path: "renderable-scene")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try #"{"title":"Renderable Scene","file":"scene.pkg"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let png = Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lz8KWwAAAABJRU5ErkJggg=="
+        )!
+        try Fixture.writeScenePackage(
+            to: project.appending(path: "scene.pkg"),
+            sceneJSON: """
+            {
+              "objects": [
+                {
+                  "image": "models/background.json",
+                  "origin": "960 540 0",
+                  "size": "1920 1080"
+                }
+              ]
+            }
+            """,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Fixture.texData(width: 1, height: 1, imageData: png))
+            ]
+        )
+
+        // When
+        let result = try WallpaperScanner().scan(root: root)
+
+        // Then
+        let asset = try XCTUnwrap(result.assets.first)
+        XCTAssertEqual(asset.kind, .scene)
+        XCTAssertEqual(asset.supportStatus, .playable)
+    }
+
+    func testScanKeepsSceneUnsupportedWhenTextureCannotDecode() throws {
+        // Given
+        let root = try Fixture.makeTempDirectory()
+        let project = root.appending(path: "broken-scene-texture")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try #"{"title":"Broken Scene","file":"scene.pkg"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try Fixture.writeScenePackage(
+            to: project.appending(path: "scene.pkg"),
+            sceneJSON: """
+            {
+              "objects": [
+                {
+                  "image": "models/background.json",
+                  "origin": "960 540 0",
+                  "size": "1920 1080"
+                }
+              ]
+            }
+            """,
+            extraEntries: [
+                (path: "models/background.json", data: Data(#"{"material":"materials/background.json"}"#.utf8)),
+                (path: "materials/background.json", data: Data(#"{"passes":[{"textures":["background"]}]}"#.utf8)),
+                (path: "materials/background.tex", data: Data([1, 2, 3]))
+            ]
+        )
+
+        // When
+        let result = try WallpaperScanner().scan(root: root)
+
+        // Then
+        let asset = try XCTUnwrap(result.assets.first)
+        XCTAssertEqual(asset.kind, .scene)
+        XCTAssertEqual(asset.supportStatus, .unsupported)
     }
 
     func testScanPrefersRealVideoOverPreviewImageWhenProjectFileIsMissing() throws {

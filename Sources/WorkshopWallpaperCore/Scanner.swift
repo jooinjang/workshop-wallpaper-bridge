@@ -151,7 +151,10 @@ public struct WallpaperScanner: Sendable {
         case .web, .image:
             return .playable
         case .scene:
-            return .unsupported
+            guard let entrypoint else {
+                return .unsupported
+            }
+            return SceneRenderPlanBuilder().canBuild(url: entrypoint) ? .playable : .unsupported
         case .unknown:
             return .unsupported
         }
@@ -184,8 +187,9 @@ public struct WallpaperScanner: Sendable {
             return [
                 ScanIssue(code: "scene_package_detected", message: analysis.userFacingSummary),
                 ScanIssue(
-                    code: "scene_renderer_required",
-                    message: "This scene is preserved locally, but full scene playback is not enabled yet."
+                    code: "scene_renderer_limited",
+                    message: "Scene playback supports 2D image layers; advanced shaders, particles, scripts, "
+                        + "audio, and video textures may differ."
                 )
             ]
         } catch {

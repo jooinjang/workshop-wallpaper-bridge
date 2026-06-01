@@ -25,6 +25,13 @@ public struct ScenePackage: Equatable, Sendable {
     public func data(for entry: ScenePackageEntry) -> Data {
         data.subdata(in: entry.dataOffset..<(entry.dataOffset + entry.length))
     }
+
+    public func data(forPath path: String) -> Data? {
+        guard let entry = entry(named: path) else {
+            return nil
+        }
+        return data(for: entry)
+    }
 }
 
 public struct ScenePackageReader: Sendable {
@@ -102,6 +109,11 @@ public struct ScenePackageAnalysis: Codable, Equatable, Sendable {
     public let particleObjectCount: Int
     public let soundObjectCount: Int
     public let modelObjectCount: Int
+    public let animatedObjectCount: Int
+    public let originAnimationCount: Int
+    public let scaleAnimationCount: Int
+    public let angleAnimationCount: Int
+    public let alphaAnimationCount: Int
     public let textureEntryCount: Int
     public let materialEntryCount: Int
     public let effectEntryCount: Int
@@ -131,9 +143,10 @@ public struct ScenePackageAnalysis: Codable, Equatable, Sendable {
             countText(audioEntryCount, "audio file"),
             countText(videoEntryCount, "video texture")
         ].compactMap(\.self).joined(separator: ", ")
+        let animationSummary = animatedObjectCount > 0 ? "; \(animatedObjectCount) animated object(s)" : ""
         let objects = objectSummary.isEmpty ? "\(objectCount) object(s)" : objectSummary
         let assets = assetSummary.isEmpty ? "\(entryCount) packaged file(s)" : assetSummary
-        return "scene.pkg \(magic): \(objects); \(assets). Full scene rendering is required."
+        return "scene.pkg \(magic): \(objects); \(assets)\(animationSummary). 2D image-layer playback is enabled."
     }
 }
 
@@ -159,6 +172,11 @@ public struct ScenePackageAnalyzer: Sendable {
             particleObjectCount: objects.filter { $0["particle"] != nil }.count,
             soundObjectCount: objects.filter { $0["sound"] != nil }.count,
             modelObjectCount: objects.filter { $0["model"] != nil }.count,
+            animatedObjectCount: objects.filter(Self.hasAnimation).count,
+            originAnimationCount: objects.filter { Self.hasAnimation($0["origin"]) }.count,
+            scaleAnimationCount: objects.filter { Self.hasAnimation($0["scale"]) }.count,
+            angleAnimationCount: objects.filter { Self.hasAnimation($0["angles"]) }.count,
+            alphaAnimationCount: objects.filter { Self.hasAnimation($0["alpha"]) }.count,
             textureEntryCount: package.entries.filter { $0.path.hasSuffix(".tex") }.count,
             materialEntryCount: package.entries.filter { $0.path.hasPrefix("materials/") }.count,
             effectEntryCount: package.entries.filter { $0.path.hasPrefix("effects/") }.count,
@@ -167,6 +185,21 @@ public struct ScenePackageAnalyzer: Sendable {
             audioEntryCount: package.entries.filter { ["mp3", "wav", "ogg"].contains($0.path.pathExtension) }.count,
             videoEntryCount: package.entries.filter { ["mp4", "webm"].contains($0.path.pathExtension) }.count
         )
+    }
+
+    private static func hasAnimation(_ object: [String: Any]) -> Bool {
+        hasAnimation(object["origin"])
+            || hasAnimation(object["scale"])
+            || hasAnimation(object["angles"])
+            || hasAnimation(object["alpha"])
+    }
+
+    private static func hasAnimation(_ value: Any?) -> Bool {
+        guard let dict = value as? [String: Any],
+              dict["animation"] is [String: Any] else {
+            return false
+        }
+        return true
     }
 }
 

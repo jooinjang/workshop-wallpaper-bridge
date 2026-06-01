@@ -34,6 +34,7 @@ final class SettingsWindowCoordinator {
         window.title = "Workshop Wallpaper Bridge Settings"
         window.contentViewController = controller
         window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
         return window
     }
 
@@ -49,12 +50,11 @@ final class SettingsWindowCoordinator {
             minimumWindowSize: defaultWindowSize,
             screenFrame: screenFrame
         )
-        window.setFrame(frame, display: false)
+        window.setFrame(frame, display: true, animate: false)
     }
 
     private func showExisting(_ window: NSWindow) {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        center(window)
     }
 }

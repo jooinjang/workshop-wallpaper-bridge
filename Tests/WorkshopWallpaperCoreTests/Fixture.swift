@@ -54,6 +54,35 @@ enum Fixture {
         }
         return data
     }
+
+    static func texData(
+        width: Int,
+        height: Int,
+        imageFormat: Int = 13,
+        imageData: Data
+    ) -> Data {
+        var data = Data()
+        data.appendNullTerminatedString("TEXV0005")
+        data.appendNullTerminatedString("TEXI0001")
+        data.appendInt32(0)
+        data.appendInt32(0)
+        data.appendInt32(width)
+        data.appendInt32(height)
+        data.appendInt32(width)
+        data.appendInt32(height)
+        data.appendUInt32(0)
+        data.appendNullTerminatedString("TEXB0003")
+        data.appendInt32(1)
+        data.appendInt32(imageFormat)
+        data.appendInt32(1)
+        data.appendInt32(width)
+        data.appendInt32(height)
+        data.appendInt32(0)
+        data.appendInt32(0)
+        data.appendInt32(imageData.count)
+        data.append(imageData)
+        return data
+    }
 }
 
 private extension Data {
@@ -62,9 +91,19 @@ private extension Data {
         Swift.withUnsafeBytes(of: &raw) { append(contentsOf: $0) }
     }
 
+    mutating func appendUInt32(_ value: UInt32) {
+        var raw = value.littleEndian
+        Swift.withUnsafeBytes(of: &raw) { append(contentsOf: $0) }
+    }
+
     mutating func appendLengthPrefixedString(_ string: String) {
         let bytes = Data(string.utf8)
         appendInt32(bytes.count)
         append(bytes)
+    }
+
+    mutating func appendNullTerminatedString(_ string: String) {
+        append(Data(string.utf8))
+        append(0)
     }
 }

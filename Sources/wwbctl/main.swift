@@ -30,6 +30,8 @@ struct WWBCtl {
             try convert(arguments: Array(arguments.dropFirst()))
         case "scene-info":
             try sceneInfo(arguments: Array(arguments.dropFirst()))
+        case "scene-render-info":
+            try sceneRenderInfo(arguments: Array(arguments.dropFirst()))
         case "doctor":
             try doctor()
         case "help", "--help", "-h":
@@ -102,6 +104,41 @@ struct WWBCtl {
         print("")
     }
 
+    private static func sceneRenderInfo(arguments: [String]) throws {
+        guard let path = arguments.first else {
+            throw CLIError.missingPath
+        }
+        let plan = try SceneRenderPlanBuilder().build(url: URL(filePath: path))
+        let info = SceneRenderInfo(
+            canvasWidth: plan.canvasSize.width,
+            canvasHeight: plan.canvasSize.height,
+            layerCount: plan.layers.count,
+            textureCount: plan.textures.count,
+            animatedLayerCount: plan.layers.filter(\.hasAnimation).count,
+            originAnimationCount: plan.layers.filter { $0.originAnimation != nil }.count,
+            scaleAnimationCount: plan.layers.filter { $0.scaleAnimation != nil }.count,
+            angleAnimationCount: plan.layers.filter { $0.angleAnimation != nil }.count,
+            alphaAnimationCount: plan.layers.filter { $0.alphaAnimation != nil }.count,
+            texturePaths: plan.layers.map(\.texturePath)
+        )
+        let data = try JSONEncoder.cli.encode(info)
+        FileHandle.standardOutput.write(data)
+        print("")
+    }
+
+    private struct SceneRenderInfo: Codable {
+        let canvasWidth: Double
+        let canvasHeight: Double
+        let layerCount: Int
+        let textureCount: Int
+        let animatedLayerCount: Int
+        let originAnimationCount: Int
+        let scaleAnimationCount: Int
+        let angleAnimationCount: Int
+        let alphaAnimationCount: Int
+        let texturePaths: [String]
+    }
+
     private static func doctor() throws {
         let store = try LibraryStore.defaultStore()
         let ffmpeg = VideoConverter().ffmpegPath() ?? "not found"
@@ -136,6 +173,7 @@ struct WWBCtl {
         wwbctl remove <asset-id> [--library <folder>]
         wwbctl convert <input-video> --out <output.mp4>
         wwbctl scene-info <scene.pkg>
+        wwbctl scene-render-info <scene.pkg>
         wwbctl doctor
         """)
     }

@@ -32,6 +32,8 @@ struct ContentView: View {
                 .toggleStyle(.switch)
             Toggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
                 .toggleStyle(.switch)
+            Toggle("Animate Lock Screen", isOn: $model.lockScreenAnimationEnabled)
+                .toggleStyle(.switch)
             Button("Stop") {
                 model.stopPlayback()
             }
@@ -62,13 +64,16 @@ struct ContentView: View {
             assetList(
                 title: "Scanned Projects",
                 assets: model.scannedAssets,
-                selection: $model.selectedScannedAssetId
+                selection: Binding(
+                    get: { model.selectedScannedAssetIds },
+                    set: { model.selectScannedAssets($0) }
+                )
             )
             HStack {
-                Button("Import Selected") {
+                Button(importButtonTitle) {
                     model.importSelected()
                 }
-                .disabled(model.selectedScannedAsset == nil)
+                .disabled(model.selectedScannedAssetIds.isEmpty)
                 Spacer()
             }
         }
@@ -117,6 +122,9 @@ struct ContentView: View {
                     model.setStillWallpaper()
                 }
                 .disabled(model.selectedLibraryAsset == nil)
+                Button("Screen Saver Settings") {
+                    model.openScreenSaverSettings()
+                }
                 Button(model.selectedLibraryAssetCount > 1 ? "Remove Selected" : "Remove") {
                     model.removeSelectedLibraryAssets()
                 }
@@ -126,14 +134,20 @@ struct ContentView: View {
             }
             Text(
                 "Video wallpapers use a generated video frame for still wallpaper. "
-                    + "Still images are also written to the macOS Lock Screen cache when available. "
-                    + "Animated Lock Screen wallpaper requires Apple's private wallpaper system."
+                    + "Still images are written to the macOS Lock Screen cache when available. "
+                    + "Animated Lock Screen uses the bundled macOS screen saver and supports MP4, MOV, and M4V."
             )
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding()
         .frame(minWidth: 460)
+    }
+
+    private var importButtonTitle: String {
+        model.selectedScannedAssetCount > 1
+            ? "Import Selected (\(model.selectedScannedAssetCount))"
+            : "Import Selected"
     }
 
     private var statusBar: some View {
@@ -153,7 +167,7 @@ struct ContentView: View {
     private func assetList(
         title: String,
         assets: [WallpaperAsset],
-        selection: Binding<WallpaperAsset.ID?>
+        selection: Binding<Set<WallpaperAsset.ID>>
     ) -> some View {
         List(selection: selection) {
             ForEach(assets) { asset in

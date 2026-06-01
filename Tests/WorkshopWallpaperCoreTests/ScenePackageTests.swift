@@ -86,9 +86,27 @@ final class ScenePackageTests: XCTestCase {
         let sceneJSON = """
         {
           "objects": [
-            {"image": "models/background.json"},
+            {
+              "image": "models/background.json",
+              "origin": {
+                "value": "0 0 0",
+                "animation": {
+                  "options": { "fps": 30, "length": 30 },
+                  "c0": [ { "frame": 0, "value": 0 }, { "frame": 30, "value": 100 } ]
+                }
+              }
+            },
             {"particle": "particles/leaves.json"},
-            {"text": "SALE"}
+            {
+              "text": "SALE",
+              "alpha": {
+                "value": 1,
+                "animation": {
+                  "options": { "fps": 30, "length": 30 },
+                  "c0": [ { "frame": 0, "value": 1 }, { "frame": 30, "value": 0 } ]
+                }
+              }
+            }
           ]
         }
         """
@@ -112,6 +130,9 @@ final class ScenePackageTests: XCTestCase {
         XCTAssertEqual(analysis.imageObjectCount, 1)
         XCTAssertEqual(analysis.particleObjectCount, 1)
         XCTAssertEqual(analysis.textObjectCount, 1)
+        XCTAssertEqual(analysis.animatedObjectCount, 2)
+        XCTAssertEqual(analysis.originAnimationCount, 1)
+        XCTAssertEqual(analysis.alphaAnimationCount, 1)
         XCTAssertEqual(analysis.textureEntryCount, 1)
         XCTAssertEqual(analysis.effectEntryCount, 1)
         XCTAssertEqual(analysis.shaderEntryCount, 1)
@@ -120,6 +141,7 @@ final class ScenePackageTests: XCTestCase {
         XCTAssertTrue(analysis.requiresFullRenderer)
         XCTAssertTrue(analysis.userFacingSummary.contains("1 image layer"))
         XCTAssertTrue(analysis.userFacingSummary.contains("1 particle system"))
+        XCTAssertTrue(analysis.userFacingSummary.contains("2 animated object(s)"))
     }
 }
 

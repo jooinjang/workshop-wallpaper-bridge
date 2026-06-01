@@ -50,4 +50,13 @@ final class SettingsWindowPlacementTests: XCTestCase {
         // Then
         XCTAssertEqual(selected, left)
     }
+
+    func testSettingsWindowDisablesAppKitWindowAnimations() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/SettingsWindowCoordinator.swift")
+
+        // Then
+        XCTAssertTrue(source.contains("window.animationBehavior = .none"))
+        XCTAssertTrue(source.contains("setFrame(frame, display: true, animate: false)"))
+    }
 }

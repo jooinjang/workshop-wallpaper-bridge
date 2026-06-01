@@ -174,6 +174,8 @@ private final class WallpaperWindow {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.ignoresMouseEvents = true
         window.canHide = false
+        window.isReleasedWhenClosed = false
+        window.animationBehavior = .none
         window.isExcludedFromWindowsMenu = true
         window.backgroundColor = .black
         window.contentView = content
@@ -218,7 +220,15 @@ private final class WallpaperWindow {
                 throw PlaybackError.invalidImage
             }
             return ImageWallpaperView(image: image, frame: contentFrame, displayMode: displayMode)
-        case .scene, .unknown:
+        case .scene:
+            let previewURL = asset.thumbnail.map { URL(filePath: $0) }
+            return try SceneWallpaperView(
+                url: url,
+                previewURL: previewURL,
+                frame: contentFrame,
+                displayMode: displayMode
+            )
+        case .unknown:
             throw PlaybackError.notPlayable(asset.kind.rawValue)
         }
     }

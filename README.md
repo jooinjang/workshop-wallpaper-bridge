@@ -2,7 +2,7 @@
 
 Use your own Wallpaper Engine Workshop projects on macOS.
 
-Workshop Wallpaper Bridge is for people who already bought Wallpaper Engine on Windows and copied their local Workshop folder to a Mac. It scans that copied folder, imports supported wallpapers into a private Mac library, and plays video, web, and image wallpapers on the desktop layer.
+Workshop Wallpaper Bridge is for people who already bought Wallpaper Engine on Windows and copied their local Workshop folder to a Mac. It scans that copied folder, imports supported wallpapers into a private Mac library, and plays video, web, image, and supported scene wallpapers on the desktop layer.
 
 [한국어 README](README.ko.md)
 
@@ -30,6 +30,8 @@ Workshop Wallpaper Bridge is for people who already bought Wallpaper Engine on W
 
 The app runs as a menu bar utility. It does not stay in the Dock or app switcher, and the settings window can be closed while animated wallpapers continue running on the desktop layer.
 
+To animate the Lock Screen, turn on **Animate Lock Screen**, click **Screen Saver Settings**, and select **Workshop Wallpaper Bridge** as the macOS screen saver. macOS runs Lock Screen animation through the screen saver system, so MP4, MOV, and M4V wallpapers animate there. Other wallpaper types use a still fallback image.
+
 ## Playback Behavior
 
 - **Auto-pause behind apps** is enabled by default.
@@ -53,7 +55,28 @@ Measured on an Apple M2 Mac running macOS 26.2 with a local MP4 wallpaper:
 
 ## Lock Screen And Still Wallpaper
 
-macOS does not provide a stable public API for third-party animated Lock Screen wallpapers. This app does not register custom animated Lock Screen videos or patch Apple's Aerial wallpaper database.
+Workshop Wallpaper Bridge supports Lock Screen animation through a bundled macOS screen saver. Apple exposes a public `ScreenSaverView` framework for custom screen savers, and macOS Lock Screen settings can start the selected screen saver when the Mac is inactive or locked.
+
+What the app can animate:
+
+- MP4, MOV, and M4V video wallpapers selected in your Mac library.
+- Your own videos added with **Add Video File**.
+
+What uses a still fallback:
+
+- WebM, MKV, and AVI until you convert them to MP4.
+- Web wallpapers.
+- Scene wallpapers. Desktop scene playback renders supported 2D image layers, but the Lock Screen screen saver uses a still fallback for scene projects.
+
+How to enable it:
+
+1. Open **Workshop Wallpaper Bridge Settings**.
+2. Turn on **Animate Lock Screen**.
+3. Click **Screen Saver Settings**.
+4. Choose **Workshop Wallpaper Bridge** as the macOS screen saver.
+5. In macOS Lock Screen settings, set when the screen saver starts and when a password is required.
+
+This app does not patch Apple's Aerial wallpaper database or use private Lock Screen wallpaper databases.
 
 What the app can do safely:
 
@@ -71,11 +94,13 @@ Use **Set Still Wallpaper** on an imported project. Direct-play video projects u
 | `.webm`, `.mkv`, `.avi` video | Convert with local `ffmpeg`, then play |
 | `index.html` web wallpaper | Plays locally in a restricted WebView |
 | `.jpg`, `.png`, `.gif`, `.heic` image | Displays as a static desktop layer |
-| `scene.pkg` scene wallpaper | Detected and inspected for scene contents; not rendered yet |
+| `scene.pkg` scene wallpaper | Renders packed 2D image layers and basic keyframed motion |
 
 You can also add your own local video with **Add Video File**. MP4, MOV, and M4V play directly. WebM, MKV, and AVI are imported first, then converted locally with `ffmpeg`.
 
-Workshop preview files such as `preview.jpg`, `thumbnail.jpg`, or `cover.png` are treated as thumbnails, not as the real wallpaper content. If a Workshop project only contains `scene.pkg` plus a preview image, the app marks it as unsupported instead of stretching the low-resolution preview across your screen. The scanner now reads safe `scene.pkg` metadata such as image layers, particles, effects, shaders, audio, models, and `.tex` textures so you can tell why a full renderer is required. Full playback still needs the 1.0 scene renderer; simple unpacking is not enough.
+Workshop preview files such as `preview.jpg`, `thumbnail.jpg`, or `cover.png` are treated as thumbnails, not as the real wallpaper content. If a Workshop project contains `scene.pkg`, the app reads the packed scene data and renders supported 2D image layers instead of stretching the low-resolution preview across your screen.
+
+Scene support is intentionally conservative. Basic image-layer scenes work locally, including packed `.tex` textures, LZ4 blocks, common DXT formats, and keyframed position, scale, rotation, and opacity. Advanced Wallpaper Engine runtime features such as particles, audio-reactive scripts, custom shaders, text layers, media integration, and video/GIF texture animation may be skipped or look different.
 
 ## What This App Will Not Do
 
@@ -129,6 +154,34 @@ The script creates:
 dist/WorkshopWallpaperBridge-macOS-arm64.dmg
 ```
 
+## Developer ID Signing And Notarization
+
+Unsigned local builds are useful for development, but public GitHub releases should use Apple Developer ID signing and notarization so users do not see the unidentified-developer warning.
+
+Prerequisites:
+
+- Apple Developer Program membership
+- A `Developer ID Application` certificate installed in Keychain
+- A saved notary profile, for example:
+
+```bash
+xcrun notarytool store-credentials "wwb-notary" \
+  --apple-id "APPLE_ID_EMAIL" \
+  --team-id "TEAM_ID" \
+  --password "APP_SPECIFIC_PASSWORD"
+```
+
+Build, sign, notarize, and staple the DMG:
+
+```bash
+SIGN_IDENTITY="Developer ID Application: NAME (TEAM_ID)" \
+NOTARY_PROFILE="wwb-notary" \
+REQUIRE_SIGNING=1 \
+bash Scripts/package-app.sh
+```
+
+The script signs the bundled executables, signs the app, creates the DMG, signs the DMG, submits it with `notarytool`, staples the accepted ticket, and verifies the final DMG with `spctl`.
+
 ## CLI
 
 `wwbctl` is included for advanced users and testing.
@@ -140,8 +193,11 @@ swift run wwbctl import-video "/path/to/video.mp4"
 swift run wwbctl remove "<asset-id>"
 swift run wwbctl convert input.webm --out output.mp4
 swift run wwbctl scene-info "/path/to/scene.pkg"
+swift run wwbctl scene-render-info "/path/to/scene.pkg"
 swift run wwbctl doctor
 ```
+
+Use `scene-info` first when a scene looks static. It reports animation, particle, effect, and shader counts without decoding large textures. `scene-render-info` decodes supported textures and can take longer on high-resolution scene packages.
 
 ## Troubleshooting
 
@@ -156,7 +212,7 @@ If the wallpaper looks blurry or cropped:
 
 - Choose **Fit** to keep the full image/video visible.
 - Choose **Fill** if you want the screen fully covered and accept edge cropping.
-- Check whether the Workshop item is a `scene.pkg` project. Scene-only projects are detected but not rendered, so a preview thumbnail is not used as a fake wallpaper.
+- Check whether the Workshop item is a `scene.pkg` project with unsupported effects. Scene projects render supported image layers and basic keyframed layer motion, while particles, scripts, custom shader effects, and animated texture features may differ from Wallpaper Engine.
 
 If WebM/MKV/AVI conversion fails:
 

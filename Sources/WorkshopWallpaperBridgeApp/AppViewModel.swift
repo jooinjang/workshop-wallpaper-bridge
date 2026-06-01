@@ -8,7 +8,7 @@ final class AppViewModel: ObservableObject {
     @Published var sourcePath = ""
     @Published var scannedAssets: [WallpaperAsset] = []
     @Published var libraryAssets: [WallpaperAsset] = []
-    @Published var selectedScannedAssetId: WallpaperAsset.ID?
+    @Published private(set) var selectedScannedAssetIds: Set<WallpaperAsset.ID> = []
     @Published private(set) var selectedLibraryAssetIds: Set<WallpaperAsset.ID> = []
     @Published var status = "Choose a copied Wallpaper Engine Workshop folder to begin."
     @Published var isWorking = false
@@ -16,12 +16,23 @@ final class AppViewModel: ObservableObject {
         didSet {
             WallpaperPlayer.shared.setDisplayMode(displayMode)
             userDefaults.set(displayMode.rawValue, forKey: PreferenceKey.displayMode)
+            if lockScreenAnimationEnabled, let asset = selectedLibraryAsset {
+                _ = refreshLockScreenAnimationConfiguration(asset: asset)
+            }
         }
     }
     @Published var autoPauseWhenCovered = true {
         didSet {
             WallpaperPlayer.shared.setAutoPauseWhenCovered(autoPauseWhenCovered)
             userDefaults.set(autoPauseWhenCovered, forKey: PreferenceKey.autoPauseWhenCovered)
+        }
+    }
+    @Published var lockScreenAnimationEnabled = false {
+        didSet {
+            guard !isSyncingLockScreenAnimation, lockScreenAnimationEnabled != oldValue else {
+                return
+            }
+            setLockScreenAnimation(lockScreenAnimationEnabled)
         }
     }
     @Published var launchAtLogin = false {
@@ -38,17 +49,21 @@ final class AppViewModel: ObservableObject {
     private let systemWallpaperSetter = SystemWallpaperSetter()
     private let store: LibraryStore
     private let loginItemController: LoginItemManaging
+    private let lockScreenAnimationController: LockScreenAnimationManaging
     private let userDefaults: UserDefaults
     private var isSyncingLaunchAtLogin = false
+    private var isSyncingLockScreenAnimation = false
 
     init() {
         userDefaults = .standard
         loginItemController = LoginItemController()
+        lockScreenAnimationController = LockScreenAnimationController()
         do {
             store = try LibraryStore.defaultStore()
             restorePreferences()
             loadLibrary()
             playLastWallpaperIfAvailable()
+            restoreLockScreenAnimationIfNeeded()
         } catch {
             store = LibraryStore(
                 root: FileManager.default.temporaryDirectory.appending(path: "WorkshopWallpaperBridge")
@@ -61,19 +76,39 @@ final class AppViewModel: ObservableObject {
     init(
         store: LibraryStore,
         loginItemController: LoginItemManaging = LoginItemController(),
+        lockScreenAnimationController: LockScreenAnimationManaging = LockScreenAnimationController(),
         userDefaults: UserDefaults = .standard
     ) {
         self.store = store
         self.loginItemController = loginItemController
+        self.lockScreenAnimationController = lockScreenAnimationController
         self.userDefaults = userDefaults
         restorePreferences()
         loadLibrary()
         playLastWallpaperIfAvailable()
+        restoreLockScreenAnimationIfNeeded()
         syncLaunchAtLoginStatus()
     }
 
     var selectedScannedAsset: WallpaperAsset? {
-        scannedAssets.first { $0.id == selectedScannedAssetId }
+        selectedScannedAssets.first
+    }
+
+    var selectedScannedAssetId: WallpaperAsset.ID? {
+        get {
+            selectedScannedAsset?.id
+        }
+        set {
+            selectedScannedAssetIds = newValue.map { Set([$0]) } ?? []
+        }
+    }
+
+    var selectedScannedAssetCount: Int {
+        selectedScannedAssets.count
+    }
+
+    var selectedScannedAssets: [WallpaperAsset] {
+        scannedAssets.filter { selectedScannedAssetIds.contains($0.id) }
     }
 
     var selectedLibraryAsset: WallpaperAsset? {
@@ -101,6 +136,11 @@ final class AppViewModel: ObservableObject {
         selectedLibraryAssetIds = ids
         normalizeLibrarySelection(allowEmpty: true)
     }
+
+    func selectScannedAssets(_ ids: Set<WallpaperAsset.ID>) {
+        selectedScannedAssetIds = ids
+        normalizeScannedSelection(allowEmpty: true)
+    }
 }
 
 extension AppViewModel {
@@ -123,7 +163,7 @@ extension AppViewModel {
         do {
             let result = try scanner.scan(root: URL(filePath: sourcePath))
             scannedAssets = result.assets
-            selectedScannedAssetId = result.assets.first?.id
+            selectedScannedAssetIds = result.assets.first.map { Set([$0.id]) } ?? []
             status = "Found \(result.assets.count) project(s)."
         } catch {
             status = error.localizedDescription
@@ -131,17 +171,30 @@ extension AppViewModel {
     }
 
     func importSelected() {
-        guard let asset = selectedScannedAsset else {
+        let assets = selectedScannedAssets
+        guard !assets.isEmpty else {
             status = "Select a scanned project first."
             return
         }
+        var importedAssets: [WallpaperAsset] = []
         do {
-            let imported = try store.importAsset(asset)
+            for asset in assets {
+                importedAssets.append(try store.importAsset(asset))
+            }
             loadLibrary()
-            selectedLibraryAssetId = imported.id
-            status = "Imported \(imported.title)."
+            selectLibraryAssets(Set(importedAssets.map(\.id)))
+            if importedAssets.count == 1, let imported = importedAssets.first {
+                status = "Imported \(imported.title)."
+            } else {
+                status = "Imported \(importedAssets.count) projects."
+            }
         } catch {
-            status = error.localizedDescription
+            loadLibrary()
+            if importedAssets.isEmpty {
+                status = error.localizedDescription
+            } else {
+                status = "Imported \(importedAssets.count) project(s), then failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -262,6 +315,10 @@ extension AppViewModel {
         loginItemController.openSystemSettings()
     }
 
+    func openScreenSaverSettings() {
+        lockScreenAnimationController.openScreenSaverSettings()
+    }
+
     func loadLibrary() {
         do {
             libraryAssets = try store.load().assets
@@ -276,6 +333,14 @@ extension AppViewModel {
         selectedLibraryAssetIds = selectedLibraryAssetIds.intersection(validIds)
         if selectedLibraryAssetIds.isEmpty, !allowEmpty, let firstId = libraryAssets.first?.id {
             selectedLibraryAssetIds = [firstId]
+        }
+    }
+
+    private func normalizeScannedSelection(allowEmpty: Bool) {
+        let validIds = Set(scannedAssets.map(\.id))
+        selectedScannedAssetIds = selectedScannedAssetIds.intersection(validIds)
+        if selectedScannedAssetIds.isEmpty, !allowEmpty, let firstId = scannedAssets.first?.id {
+            selectedScannedAssetIds = [firstId]
         }
     }
 
@@ -296,6 +361,25 @@ extension AppViewModel {
         }
     }
 
+    private func setLockScreenAnimation(_ enabled: Bool) {
+        do {
+            try lockScreenAnimationController.setEnabled(
+                enabled,
+                activeAsset: selectedLibraryAsset,
+                displayMode: displayMode
+            )
+            userDefaults.set(enabled, forKey: PreferenceKey.lockScreenAnimationEnabled)
+            status = enabled
+                ? "Installed the Lock Screen screen saver. Select it in Screen Saver settings to animate while locked."
+                : "Animated Lock Screen screen saver is off."
+        } catch {
+            isSyncingLockScreenAnimation = true
+            lockScreenAnimationEnabled = oldLockScreenAnimationPreference()
+            isSyncingLockScreenAnimation = false
+            status = "Animated Lock Screen could not be changed: \(error.localizedDescription)"
+        }
+    }
+
     private func restorePreferences() {
         if let rawDisplayMode = userDefaults.string(forKey: PreferenceKey.displayMode),
            let storedDisplayMode = WallpaperDisplayMode(rawValue: rawDisplayMode) {
@@ -303,6 +387,11 @@ extension AppViewModel {
         }
         if userDefaults.object(forKey: PreferenceKey.autoPauseWhenCovered) != nil {
             autoPauseWhenCovered = userDefaults.bool(forKey: PreferenceKey.autoPauseWhenCovered)
+        }
+        if userDefaults.object(forKey: PreferenceKey.lockScreenAnimationEnabled) != nil {
+            isSyncingLockScreenAnimation = true
+            lockScreenAnimationEnabled = userDefaults.bool(forKey: PreferenceKey.lockScreenAnimationEnabled)
+            isSyncingLockScreenAnimation = false
         }
     }
 
@@ -322,6 +411,21 @@ extension AppViewModel {
         }
     }
 
+    private func restoreLockScreenAnimationIfNeeded() {
+        guard lockScreenAnimationEnabled else {
+            return
+        }
+        do {
+            try lockScreenAnimationController.setEnabled(
+                true,
+                activeAsset: selectedLibraryAsset,
+                displayMode: displayMode
+            )
+        } catch {
+            status = "Animated Lock Screen could not be restored: \(error.localizedDescription)"
+        }
+    }
+
     private func play(asset: WallpaperAsset, remember: Bool) throws {
         try WallpaperPlayer.shared.play(
             asset: asset,
@@ -331,9 +435,30 @@ extension AppViewModel {
         if remember {
             userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId)
         }
-        status = autoPauseWhenCovered
+        let lockScreenError = refreshLockScreenAnimationConfiguration(asset: asset)
+        let playbackStatus = autoPauseWhenCovered
             ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
             : "Playing continuously on the desktop layer. You can minimize this app."
+        status = lockScreenError.map { "\(playbackStatus) Lock Screen update failed: \($0)" } ?? playbackStatus
+    }
+
+    private func refreshLockScreenAnimationConfiguration(asset: WallpaperAsset) -> String? {
+        guard lockScreenAnimationEnabled else {
+            return nil
+        }
+        do {
+            try lockScreenAnimationController.updateActiveAsset(asset, displayMode: displayMode)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private func oldLockScreenAnimationPreference() -> Bool {
+        guard userDefaults.object(forKey: PreferenceKey.lockScreenAnimationEnabled) != nil else {
+            return false
+        }
+        return userDefaults.bool(forKey: PreferenceKey.lockScreenAnimationEnabled)
     }
 
     private func convertedAsset(_ asset: WallpaperAsset, output: URL) -> WallpaperAsset {
@@ -362,5 +487,6 @@ extension AppViewModel {
 private enum PreferenceKey {
     static let displayMode = "displayMode"
     static let autoPauseWhenCovered = "autoPauseWhenCovered"
+    static let lockScreenAnimationEnabled = "lockScreenAnimationEnabled"
     static let lastPlayedAssetId = "lastPlayedAssetId"
 }
