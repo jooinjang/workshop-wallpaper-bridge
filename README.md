@@ -6,6 +6,12 @@ Workshop Wallpaper Bridge is for people who already bought Wallpaper Engine on W
 
 [한국어 README](README.ko.md)
 
+## Demo
+
+<video src="assets/workshop-wallpaper-bridge-demo.mov" controls width="100%"></video>
+
+[Watch the demo video](assets/workshop-wallpaper-bridge-demo.mov)
+
 ## Quick Start
 
 1. On Windows, find your Wallpaper Engine Workshop folder:
