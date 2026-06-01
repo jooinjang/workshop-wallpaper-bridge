@@ -24,4 +24,47 @@ enum Fixture {
         try metadata.write(to: project.appending(path: "project.json"), atomically: true, encoding: .utf8)
         FileManager.default.createFile(atPath: project.appending(path: file).path, contents: Data())
     }
+
+    static func writeScenePackage(
+        to url: URL,
+        sceneJSON: String,
+        extraEntries: [(path: String, data: Data)] = []
+    ) throws {
+        var entries = [(path: "scene.json", data: Data(sceneJSON.utf8))]
+        entries.append(contentsOf: extraEntries)
+        try scenePackageData(entries: entries).write(to: url, options: [.atomic])
+    }
+
+    static func scenePackageData(
+        magic: String = "PKGV0007",
+        entries: [(path: String, data: Data)]
+    ) -> Data {
+        var data = Data()
+        data.appendLengthPrefixedString(magic)
+        data.appendInt32(entries.count)
+        var offset = 0
+        for entry in entries {
+            data.appendLengthPrefixedString(entry.path)
+            data.appendInt32(offset)
+            data.appendInt32(entry.data.count)
+            offset += entry.data.count
+        }
+        for entry in entries {
+            data.append(entry.data)
+        }
+        return data
+    }
+}
+
+private extension Data {
+    mutating func appendInt32(_ value: Int) {
+        var raw = Int32(value).littleEndian
+        Swift.withUnsafeBytes(of: &raw) { append(contentsOf: $0) }
+    }
+
+    mutating func appendLengthPrefixedString(_ string: String) {
+        let bytes = Data(string.utf8)
+        appendInt32(bytes.count)
+        append(bytes)
+    }
 }

@@ -89,13 +89,32 @@ public struct WallpaperScanner: Sendable {
             guard let url = item as? URL, isRegularFile(url) else {
                 return nil
             }
+            guard isInside(url, root: directory) else {
+                return nil
+            }
             return url
         }
     }
 
     private func resolveExisting(project: URL, relativePath: String) -> URL? {
-        let candidate = project.appending(path: relativePath)
-        return FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+        guard !(relativePath as NSString).isAbsolutePath else {
+            return nil
+        }
+        let candidate = project.appending(path: relativePath).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: candidate.path),
+              isInside(candidate, root: project) else {
+            return nil
+        }
+        return candidate
+    }
+
+    private func isInside(_ url: URL, root: URL) -> Bool {
+        let rootComponents = root.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let urlComponents = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        guard urlComponents.count > rootComponents.count else {
+            return false
+        }
+        return Array(urlComponents.prefix(rootComponents.count)) == rootComponents
     }
 
     private func isImplicitThumbnail(_ url: URL) -> Bool {
@@ -146,14 +165,37 @@ public struct WallpaperScanner: Sendable {
             )
         }
         if kind == .scene {
-            result.append(
-                ScanIssue(
-                    code: "proprietary_scene_package",
-                    message: "scene.pkg is a proprietary Wallpaper Engine scene package and is not unpacked."
-                )
-            )
+            result.append(contentsOf: sceneIssues(entrypoint: entrypoint))
         }
         return result
+    }
+
+    private func sceneIssues(entrypoint: URL?) -> [ScanIssue] {
+        guard let entrypoint else {
+            return [
+                ScanIssue(
+                    code: "scene_package_missing",
+                    message: "scene.pkg metadata was detected but the package file was not found."
+                )
+            ]
+        }
+        do {
+            let analysis = try ScenePackageAnalyzer().analyze(url: entrypoint)
+            return [
+                ScanIssue(code: "scene_package_detected", message: analysis.userFacingSummary),
+                ScanIssue(
+                    code: "scene_renderer_required",
+                    message: "This scene is preserved locally, but full scene playback is not enabled yet."
+                )
+            ]
+        } catch {
+            return [
+                ScanIssue(
+                    code: "scene_package_unreadable",
+                    message: "scene.pkg could not be inspected: \(error.localizedDescription)"
+                )
+            ]
+        }
     }
 
     private func sourceKind(for root: URL) -> SourceKind {

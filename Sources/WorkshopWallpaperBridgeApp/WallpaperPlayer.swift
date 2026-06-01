@@ -170,7 +170,7 @@ private final class WallpaperWindow {
             backing: .buffered,
             defer: false
         )
-        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
+        window.level = WallpaperWindowLevel.desktopWallpaper
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.ignoresMouseEvents = true
         window.canHide = false
@@ -184,6 +184,8 @@ private final class WallpaperWindow {
     }
 
     func close() {
+        (content as? WallpaperContentLifecycle)?.prepareForClose()
+        window.contentView = nil
         window.close()
     }
 

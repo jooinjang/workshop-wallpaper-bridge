@@ -87,7 +87,11 @@ final class ScannerTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-        FileManager.default.createFile(atPath: project.appending(path: "scene.pkg").path, contents: Data())
+        try Fixture.writeScenePackage(
+            to: project.appending(path: "scene.pkg"),
+            sceneJSON: #"{"objects":[{"image":"models/background.json"},{"particle":"particles/leaves.json"}]}"#,
+            extraEntries: [(path: "materials/background.tex", data: Data([1, 2, 3]))]
+        )
         FileManager.default.createFile(atPath: project.appending(path: "preview.jpg").path, contents: Data())
 
         // When
@@ -99,7 +103,8 @@ final class ScannerTests: XCTestCase {
         XCTAssertEqual(asset.supportStatus, .unsupported)
         XCTAssertEqual(URL(filePath: try XCTUnwrap(asset.entrypoint)).lastPathComponent, "scene.pkg")
         XCTAssertEqual(URL(filePath: try XCTUnwrap(asset.thumbnail)).lastPathComponent, "preview.jpg")
-        XCTAssertTrue(asset.issues.contains { $0.code == "proprietary_scene_package" })
+        XCTAssertTrue(asset.issues.contains { $0.code == "scene_package_detected" })
+        XCTAssertTrue(asset.issues.contains { $0.code == "scene_renderer_required" })
     }
 
     func testScanPrefersRealVideoOverPreviewImageWhenProjectFileIsMissing() throws {
@@ -148,5 +153,59 @@ final class ScannerTests: XCTestCase {
         XCTAssertEqual(asset.supportStatus, .playable)
         XCTAssertEqual(URL(filePath: try XCTUnwrap(asset.entrypoint)).lastPathComponent, "poster.jpg")
         XCTAssertEqual(URL(filePath: try XCTUnwrap(asset.thumbnail)).lastPathComponent, "preview.jpg")
+    }
+
+    func testScanRejectsMetadataPathsOutsideProjectDirectory() throws {
+        // Given
+        let parent = try Fixture.makeTempDirectory()
+        let root = parent.appending(path: "root")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let project = root.appending(path: "path-escape")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try #"{"title":"Escape","file":"../../outside.mp4","preview":"../../outside.jpg"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        FileManager.default.createFile(atPath: parent.appending(path: "outside.mp4").path, contents: Data())
+        FileManager.default.createFile(atPath: parent.appending(path: "outside.jpg").path, contents: Data())
+
+        // When
+        let result = try WallpaperScanner().scan(root: root)
+
+        // Then
+        let asset = try XCTUnwrap(result.assets.first)
+        XCTAssertNil(asset.entrypoint)
+        XCTAssertNil(asset.thumbnail)
+        XCTAssertEqual(asset.kind, .unknown)
+        XCTAssertEqual(asset.supportStatus, .unsupported)
+        XCTAssertTrue(asset.issues.contains { $0.code == "no_supported_entrypoint" })
+    }
+
+    func testScanRejectsSymlinkEntrypointOutsideProjectDirectory() throws {
+        // Given
+        let parent = try Fixture.makeTempDirectory()
+        let root = parent.appending(path: "root")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let project = root.appending(path: "symlink-escape")
+        let outside = parent.appending(path: "outside.mp4")
+        let symlink = project.appending(path: "clip.mp4")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: outside.path, contents: Data())
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: outside)
+        try #"{"title":"Symlink","file":"clip.mp4"}"#.write(
+            to: project.appending(path: "project.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        // When
+        let result = try WallpaperScanner().scan(root: root)
+
+        // Then
+        let asset = try XCTUnwrap(result.assets.first)
+        XCTAssertNil(asset.entrypoint)
+        XCTAssertEqual(asset.kind, .unknown)
+        XCTAssertEqual(asset.supportStatus, .unsupported)
     }
 }

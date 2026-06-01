@@ -6,6 +6,14 @@ APP_NAME="Workshop Wallpaper Bridge"
 APP_DIR="$ROOT/dist/$APP_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
+DMG_STAGING=""
+
+cleanup() {
+  if [ -n "$DMG_STAGING" ] && [ -d "$DMG_STAGING" ]; then
+    rm -rf "$DMG_STAGING"
+  fi
+}
+trap cleanup EXIT
 
 cd "$ROOT"
 swift build -c release
@@ -31,9 +39,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.1</string>
+  <string>0.4.0</string>
   <key>CFBundleVersion</key>
-  <string>4</string>
+  <string>6</string>
   <key>LSUIElement</key>
   <true/>
   <key>LSMinimumSystemVersion</key>
@@ -44,5 +52,13 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 chmod +x "$MACOS_DIR/Workshop Wallpaper Bridge" "$MACOS_DIR/wwbctl"
-ditto -c -k --keepParent "$APP_DIR" "$ROOT/dist/WorkshopWallpaperBridge-macOS-arm64.zip"
-printf '%s\n' "$ROOT/dist/WorkshopWallpaperBridge-macOS-arm64.zip"
+DMG_STAGING="$(mktemp -d)"
+cp -R "$APP_DIR" "$DMG_STAGING/"
+ln -s /Applications "$DMG_STAGING/Applications"
+hdiutil create \
+  -volname "$APP_NAME" \
+  -srcfolder "$DMG_STAGING" \
+  -ov \
+  -format UDZO \
+  "$ROOT/dist/WorkshopWallpaperBridge-macOS-arm64.dmg" >/dev/null
+printf '%s\n' "$ROOT/dist/WorkshopWallpaperBridge-macOS-arm64.dmg"

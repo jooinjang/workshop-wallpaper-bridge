@@ -178,7 +178,10 @@ final class LibraryStoreTests: XCTestCase {
         try #"{"title":"Scene","file":"scene.json","preview":"preview.jpg","type":"scene"}"#
             .write(to: project.appending(path: "project.json"), atomically: true, encoding: .utf8)
         FileManager.default.createFile(atPath: preview.path, contents: Data([1]))
-        FileManager.default.createFile(atPath: scenePackage.path, contents: Data([2]))
+        try Fixture.writeScenePackage(
+            to: scenePackage,
+            sceneJSON: #"{"objects":[{"image":"models/background.json"}]}"#
+        )
         let legacy = WallpaperAsset(
             id: "legacy-scene",
             title: "Scene",
@@ -203,7 +206,8 @@ final class LibraryStoreTests: XCTestCase {
         XCTAssertEqual(repaired.supportStatus, .unsupported)
         XCTAssertEqual(standardPath(repaired.entrypoint), standardPath(scenePackage.path))
         XCTAssertEqual(repaired.thumbnail, preview.path)
-        XCTAssertTrue(repaired.issues.contains { $0.code == "proprietary_scene_package" })
+        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_package_detected" })
+        XCTAssertTrue(repaired.issues.contains { $0.code == "scene_renderer_required" })
     }
 
     func testLoadRepairsLegacyPreviewImageManifestForVideoProject() throws {

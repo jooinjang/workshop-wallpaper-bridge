@@ -28,6 +28,8 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Toggle("Open at Login", isOn: $model.launchAtLogin)
+                .toggleStyle(.switch)
             Toggle("Auto-pause behind apps", isOn: $model.autoPauseWhenCovered)
                 .toggleStyle(.switch)
             Button("Stop") {
@@ -123,8 +125,9 @@ struct ContentView: View {
                 Spacer()
             }
             Text(
-                "Animated Lock Screen is not exposed through a stable public macOS API. "
-                    + "Still images can be set through macOS wallpaper settings."
+                "Video wallpapers use a generated video frame for still wallpaper. "
+                    + "Still images are also written to the macOS Lock Screen cache when available. "
+                    + "Animated Lock Screen wallpaper requires Apple's private wallpaper system."
             )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -203,11 +206,17 @@ private struct AssetRow: View {
                 Text(asset.title)
                     .font(.body.weight(.medium))
                     .lineLimit(1)
-                Text(asset.projectDirectory)
-                    .font(.caption)
+            Text(asset.projectDirectory)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if let issue = asset.issues.first {
+                Text(issue.message)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+        }
             Spacer()
             Text(asset.kind.rawValue)
                 .font(.caption)

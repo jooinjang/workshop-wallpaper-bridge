@@ -2,7 +2,10 @@ import AppKit
 import AVFoundation
 
 @MainActor
-final class VideoWallpaperView: NSView, PausableWallpaperContent, DisplayModeUpdatableContent {
+final class VideoWallpaperView: NSView,
+    PausableWallpaperContent,
+    DisplayModeUpdatableContent,
+    WallpaperContentLifecycle {
     private let player: AVQueuePlayer
     private let looper: AVPlayerLooper
     private let playerLayer: AVPlayerLayer
@@ -41,6 +44,14 @@ final class VideoWallpaperView: NSView, PausableWallpaperContent, DisplayModeUpd
     }
 
     func setDisplayMode(_ displayMode: WallpaperDisplayMode) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         playerLayer.videoGravity = WallpaperContentLayout.videoGravity(for: displayMode)
+        CATransaction.commit()
+    }
+
+    func prepareForClose() {
+        player.pause()
+        player.removeAllItems()
     }
 }

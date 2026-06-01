@@ -24,4 +24,17 @@ final class WallpaperPlayerSuspensionTests: XCTestCase {
         XCTAssertFalse(body.contains("reopen("))
         XCTAssertFalse(body.contains("closeWindows("))
     }
+
+    func testWindowClosePreparesWallpaperContentBeforeClosing() throws {
+        // Given
+        let source = try String(contentsOfFile: "Sources/WorkshopWallpaperBridgeApp/WallpaperPlayer.swift")
+        let windowStart = try XCTUnwrap(source.range(of: "private final class WallpaperWindow"))
+        let start = try XCTUnwrap(source.range(of: "func close()", range: windowStart.lowerBound..<source.endIndex))
+        let end = try XCTUnwrap(source.range(of: "func setSuspended", range: start.lowerBound..<source.endIndex))
+        let body = String(source[start.lowerBound..<end.lowerBound])
+
+        // Then
+        XCTAssertTrue(body.contains("prepareForClose()"))
+        XCTAssertTrue(body.contains("window.contentView = nil"))
+    }
 }

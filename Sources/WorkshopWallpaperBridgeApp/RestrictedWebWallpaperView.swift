@@ -53,14 +53,15 @@ final class RestrictedWebWallpaperView: NSView, WKNavigationDelegate, PausableWa
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: "dev.3xhaust.WorkshopWallpaperBridge.BlockRemote",
             encodedContentRuleList: rules
-        ) { [weak self] ruleList, _ in
+        ) { [weak self] ruleList, error in
             DispatchQueue.main.async {
                 guard let self else {
                     return
                 }
-                if let ruleList {
-                    self.webView.configuration.userContentController.add(ruleList)
+                guard error == nil, let ruleList else {
+                    return
                 }
+                self.webView.configuration.userContentController.add(ruleList)
                 self.webView.loadFileURL(self.url, allowingReadAccessTo: self.readAccessURL)
             }
         }

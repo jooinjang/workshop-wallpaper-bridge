@@ -28,6 +28,8 @@ struct WWBCtl {
             try remove(arguments: Array(arguments.dropFirst()))
         case "convert":
             try convert(arguments: Array(arguments.dropFirst()))
+        case "scene-info":
+            try sceneInfo(arguments: Array(arguments.dropFirst()))
         case "doctor":
             try doctor()
         case "help", "--help", "-h":
@@ -90,6 +92,16 @@ struct WWBCtl {
         print("converted \(arguments[2])")
     }
 
+    private static func sceneInfo(arguments: [String]) throws {
+        guard let path = arguments.first else {
+            throw CLIError.missingPath
+        }
+        let analysis = try ScenePackageAnalyzer().analyze(url: URL(filePath: path))
+        let data = try JSONEncoder.cli.encode(analysis)
+        FileHandle.standardOutput.write(data)
+        print("")
+    }
+
     private static func doctor() throws {
         let store = try LibraryStore.defaultStore()
         let ffmpeg = VideoConverter().ffmpegPath() ?? "not found"
@@ -123,6 +135,7 @@ struct WWBCtl {
         wwbctl import-video <video-file> [--library <folder>]
         wwbctl remove <asset-id> [--library <folder>]
         wwbctl convert <input-video> --out <output.mp4>
+        wwbctl scene-info <scene.pkg>
         wwbctl doctor
         """)
     }

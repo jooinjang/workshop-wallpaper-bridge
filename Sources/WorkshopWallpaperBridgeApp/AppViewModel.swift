@@ -15,11 +15,21 @@ final class AppViewModel: ObservableObject {
     @Published var displayMode: WallpaperDisplayMode = .fit {
         didSet {
             WallpaperPlayer.shared.setDisplayMode(displayMode)
+            userDefaults.set(displayMode.rawValue, forKey: PreferenceKey.displayMode)
         }
     }
     @Published var autoPauseWhenCovered = true {
         didSet {
             WallpaperPlayer.shared.setAutoPauseWhenCovered(autoPauseWhenCovered)
+            userDefaults.set(autoPauseWhenCovered, forKey: PreferenceKey.autoPauseWhenCovered)
+        }
+    }
+    @Published var launchAtLogin = false {
+        didSet {
+            guard !isSyncingLaunchAtLogin, launchAtLogin != oldValue else {
+                return
+            }
+            setLaunchAtLogin(launchAtLogin)
         }
     }
 
@@ -27,22 +37,39 @@ final class AppViewModel: ObservableObject {
     private let converter = VideoConverter()
     private let systemWallpaperSetter = SystemWallpaperSetter()
     private let store: LibraryStore
+    private let loginItemController: LoginItemManaging
+    private let userDefaults: UserDefaults
+    private var isSyncingLaunchAtLogin = false
 
     init() {
+        userDefaults = .standard
+        loginItemController = LoginItemController()
         do {
             store = try LibraryStore.defaultStore()
+            restorePreferences()
             loadLibrary()
+            playLastWallpaperIfAvailable()
         } catch {
             store = LibraryStore(
                 root: FileManager.default.temporaryDirectory.appending(path: "WorkshopWallpaperBridge")
             )
             status = error.localizedDescription
         }
+        syncLaunchAtLoginStatus()
     }
 
-    init(store: LibraryStore) {
+    init(
+        store: LibraryStore,
+        loginItemController: LoginItemManaging = LoginItemController(),
+        userDefaults: UserDefaults = .standard
+    ) {
         self.store = store
+        self.loginItemController = loginItemController
+        self.userDefaults = userDefaults
+        restorePreferences()
         loadLibrary()
+        playLastWallpaperIfAvailable()
+        syncLaunchAtLoginStatus()
     }
 
     var selectedScannedAsset: WallpaperAsset? {
@@ -74,7 +101,9 @@ final class AppViewModel: ObservableObject {
         selectedLibraryAssetIds = ids
         normalizeLibrarySelection(allowEmpty: true)
     }
+}
 
+extension AppViewModel {
     func chooseFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -147,14 +176,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         do {
-            try WallpaperPlayer.shared.play(
-                asset: asset,
-                autoPauseWhenCovered: autoPauseWhenCovered,
-                displayMode: displayMode
-            )
-            status = autoPauseWhenCovered
-                ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
-                : "Playing continuously on the desktop layer. You can minimize this app."
+            try play(asset: asset, remember: true)
         } catch {
             status = error.localizedDescription
         }
@@ -166,8 +188,14 @@ final class AppViewModel: ObservableObject {
             return
         }
         do {
-            let url = try systemWallpaperSetter.setStillWallpaper(from: asset)
-            status = "Set still wallpaper from \(url.lastPathComponent). macOS may also use it on the Lock Screen."
+            let result = try systemWallpaperSetter.setStillWallpaper(from: asset)
+            if result.lockScreenCacheURL != nil {
+                status = "Set desktop wallpaper and wrote Lock Screen still image from "
+                    + "\(result.imageURL.lastPathComponent). Lock the Mac once to refresh the visible screen."
+            } else {
+                status = "Set desktop still wallpaper from \(result.imageURL.lastPathComponent), "
+                    + "but Lock Screen failed: \(result.lockScreenErrorDescription ?? "unknown error")."
+            }
         } catch {
             status = error.localizedDescription
         }
@@ -226,7 +254,12 @@ final class AppViewModel: ObservableObject {
 
     func stopPlayback() {
         WallpaperPlayer.shared.stop()
+        userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
         status = "Playback stopped."
+    }
+
+    func openLoginItemsSettings() {
+        loginItemController.openSystemSettings()
     }
 
     func loadLibrary() {
@@ -244,6 +277,63 @@ final class AppViewModel: ObservableObject {
         if selectedLibraryAssetIds.isEmpty, !allowEmpty, let firstId = libraryAssets.first?.id {
             selectedLibraryAssetIds = [firstId]
         }
+    }
+
+    private func syncLaunchAtLoginStatus() {
+        isSyncingLaunchAtLogin = true
+        launchAtLogin = loginItemController.isEnabled
+        isSyncingLaunchAtLogin = false
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            try loginItemController.setEnabled(enabled)
+            syncLaunchAtLoginStatus()
+            status = enabled ? "Workshop Wallpaper Bridge will open at login." : "Open at login is off."
+        } catch {
+            syncLaunchAtLoginStatus()
+            status = "Open at login could not be changed: \(error.localizedDescription)"
+        }
+    }
+
+    private func restorePreferences() {
+        if let rawDisplayMode = userDefaults.string(forKey: PreferenceKey.displayMode),
+           let storedDisplayMode = WallpaperDisplayMode(rawValue: rawDisplayMode) {
+            displayMode = storedDisplayMode
+        }
+        if userDefaults.object(forKey: PreferenceKey.autoPauseWhenCovered) != nil {
+            autoPauseWhenCovered = userDefaults.bool(forKey: PreferenceKey.autoPauseWhenCovered)
+        }
+    }
+
+    private func playLastWallpaperIfAvailable() {
+        guard let id = userDefaults.string(forKey: PreferenceKey.lastPlayedAssetId),
+              let asset = libraryAssets.first(where: { $0.id == id }),
+              asset.supportStatus == .playable else {
+            return
+        }
+        selectedLibraryAssetId = id
+        do {
+            try play(asset: asset, remember: false)
+            status = "Restored \(asset.title) on the desktop."
+        } catch {
+            userDefaults.removeObject(forKey: PreferenceKey.lastPlayedAssetId)
+            status = "Could not restore \(asset.title): \(error.localizedDescription)"
+        }
+    }
+
+    private func play(asset: WallpaperAsset, remember: Bool) throws {
+        try WallpaperPlayer.shared.play(
+            asset: asset,
+            autoPauseWhenCovered: autoPauseWhenCovered,
+            displayMode: displayMode
+        )
+        if remember {
+            userDefaults.set(asset.id, forKey: PreferenceKey.lastPlayedAssetId)
+        }
+        status = autoPauseWhenCovered
+            ? "Playing on the desktop layer. You can minimize this app; playback pauses only behind other apps."
+            : "Playing continuously on the desktop layer. You can minimize this app."
     }
 
     private func convertedAsset(_ asset: WallpaperAsset, output: URL) -> WallpaperAsset {
@@ -267,4 +357,10 @@ final class AppViewModel: ObservableObject {
         .mpeg4Movie,
         .quickTimeMovie
     ] + ["m4v", "webm", "mkv", "avi"].compactMap { UTType(filenameExtension: $0) }
+}
+
+private enum PreferenceKey {
+    static let displayMode = "displayMode"
+    static let autoPauseWhenCovered = "autoPauseWhenCovered"
+    static let lastPlayedAssetId = "lastPlayedAssetId"
 }

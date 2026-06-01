@@ -9,3 +9,8 @@ protocol PausableWallpaperContent: AnyObject {
 protocol DisplayModeUpdatableContent: AnyObject {
     func setDisplayMode(_ displayMode: WallpaperDisplayMode)
 }
+
+@MainActor
+protocol WallpaperContentLifecycle: AnyObject {
+    func prepareForClose()
+}

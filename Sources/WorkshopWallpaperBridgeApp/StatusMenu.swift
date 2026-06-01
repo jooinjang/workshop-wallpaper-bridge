@@ -9,7 +9,11 @@ struct StatusMenu: View {
             SettingsWindowCoordinator.shared.show(model: model)
         }
         Divider()
+        Toggle("Open at Login", isOn: $model.launchAtLogin)
         Toggle("Auto-pause Behind Apps", isOn: $model.autoPauseWhenCovered)
+        Button("Open Login Items Settings") {
+            model.openLoginItemsSettings()
+        }
         Button("Stop Playback") {
             model.stopPlayback()
         }
